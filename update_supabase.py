@@ -6,16 +6,17 @@ import urllib3
 from bs4 import BeautifulSoup
 from supabase import create_client
 
-# Désactiver les alertes de sécurité SSL pour les requêtes vers la bourse
+# Désactiver les alertes SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Configuration Supabase via les Secrets GitHub
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+# Vos coordonnées Supabase
+SUPABASE_URL = "https://nbgpxasdgucltfcygqua.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5iZ3B4YXNkZ3VjbHRmY3lncXVhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzMzc1NDAsImV4cCI6MjA4NTkxMzU0MH0.EpLaGobOZxa_VI-_cOBXoDBiB7J-5QaC9vNV4lyNNKc"
+
+# Initialisation du client Supabase
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def clean_numeric(value):
-    """Nettoie les valeurs textuelles pour les convertir en float/int."""
     if not value or value.strip() in ['-', '']: return 0.0
     clean = re.sub(r'[^\d,.-]', '', value).replace(' ', '').replace(',', '.')
     try:
@@ -24,7 +25,6 @@ def clean_numeric(value):
         return 0.0
 
 def extraire_date_bourse(soup):
-    """Extrait et convertit la date du site au format YYYY-MM-DD."""
     texte_page = soup.get_text(separator=' ')
     mois_fr = {
         'janvier': '01', 'février': '02', 'mars': '03', 'avril': '04',
@@ -50,10 +50,10 @@ def run_sync():
         
         date_iso = extraire_date_bourse(soup)
         if not date_iso:
-            print("Erreur : Date de séance introuvable.")
+            print("Erreur : Impossible de trouver la date sur la page.")
             return
 
-        print(f"Séance détectée : {date_iso}")
+        print(f"Tentative d'insertion pour la séance du : {date_iso}")
         rows = soup.select("table tbody tr")
         data_to_insert = []
 
@@ -61,7 +61,7 @@ def run_sync():
             cells = [c.get_text(strip=True) for c in row.find_all("td")]
             if len(cells) < 16: continue
             
-            # Mapping vers les colonnes de votre table Supabase bourse_maroc
+            # Mapping vers votre table SQL bourse_maroc
             ligne = {
                 "seance": date_iso,
                 "instrument": cells[0].strip(),
@@ -73,18 +73,20 @@ def run_sync():
                 "volume_echanges": clean_numeric(cells[6]),
                 "nb_contrats": int(clean_numeric(cells[15])),
                 "capitalisation": clean_numeric(cells[14]),
-                "cours_ajuste": clean_numeric(cells[4]) # Utilise le dernier cours par défaut
+                "cours_ajuste": clean_numeric(cells[4])
             }
             data_to_insert.append(ligne)
 
         if data_to_insert:
-            # Envoi vers Supabase
-            # La contrainte UNIQUE (seance, instrument) empêchera les doublons
-            result = supabase.table("bourse_maroc").insert(data_to_insert).execute()
-            print(f"Succès : {len(data_to_insert)} instruments mis à jour sur Supabase.")
+            # Insertion dans Supabase
+            supabase.table("bourse_maroc").insert(data_to_insert).execute()
+            print(f"Succès : {len(data_to_insert)} lignes insérées pour le {date_iso}.")
         
     except Exception as e:
-        print(f"Erreur lors de la synchronisation : {e}")
+        if "duplicate key value" in str(e):
+            print(f"Info : La séance du {date_iso} existe déjà dans la base (Doublon bloqué).")
+        else:
+            print(f"Erreur : {e}")
 
 if __name__ == "__main__":
     run_sync()
